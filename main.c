@@ -1,8 +1,8 @@
-#include "structures_bash.h"
-#include "reader.h"
-#include "executor.h"
-#include "job_controller.h"
-#include "signals_sender.h"
+#include "src/structures_bash.h"
+#include "src/reader.h"
+#include "src/executor.h"
+#include "src/jobs_control.h"
+#include "src/groups.h"
 #include <signal.h>
 
 int main(){
