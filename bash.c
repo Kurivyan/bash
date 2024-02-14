@@ -271,9 +271,107 @@ void execute_conv(struct conv *conv)
 	}
 	if (commands_num == 2) // продвинутый вариант, от двух процессов
 	{
+		int fd[2];
+		pipe(fd);
+		pid_t pid1 = 0, pid2 = 0;
+		pid1 = fork();
+		if (pid1 == 0)
+		{
+			dup2(fd[1], STDOUT_FILENO);
+			close(fd[0]);
+			close(fd[1]);
+			execvp(conv->data[0][0], conv->data[0]);
+			_exit(200);
+		}
+		pid2 = fork();
+		if (pid2 == 0)
+		{
+			dup2(fd[0], STDIN_FILENO);
+			close(fd[0]);
+			close(fd[1]);
+			execvp(conv->data[1][0], conv->data[1]);
+		}
+		close(fd[0]);
+		close(fd[1]);
 	}
 	if (commands_num > 2) // гроб вариант от трех процессов
 	{
+		int fd[commands_num - 1][2];
+		for (int i = 0; i < commands_num - 1; i++)
+		{
+			pipe(fd[i]);
+		}
+
+		pid_t conv_pids[commands_num];
+		for (int i = 0; i < commands_num; i++)
+		{
+			conv_pids[i] = 0;
+		}
+
+		for (int i = 0; i < commands_num; i++)
+		{
+			conv_pids[i] = fork();
+			if (conv_pids[i] == 0)
+			{
+				if (i == 0)
+				{
+					dup2(fd[i][1], STDOUT_FILENO);
+					close(fd[i][0]);
+					close(fd[i][1]);
+					for (int j = 1; j < commands_num - 1; j++)
+					{
+						close(fd[j][0]);
+						close(fd[j][1]);
+					}
+					execvp(conv->data[i][0], conv->data[i]);
+					_exit(200);
+				}
+				if (i == commands_num - 1)
+				{
+					dup2(fd[i - 1][0], STDIN_FILENO);
+					close(fd[i - 1][0]);
+					close(fd[i - 1][1]);
+					for (int j = 0; j < commands_num - 1; j++)
+					{
+						close(fd[j][0]);
+						close(fd[j][1]);
+					}
+					execvp(conv->data[i][0], conv->data[i]);
+					_exit(200);
+				}
+				if (i > 0)
+				{
+					for (int j = 0; j < i - 1; j++)
+					{
+						close(fd[j][0]);
+						close(fd[j][1]);
+					}
+					for (int j = i + 1; j < commands_num - 1; j++)
+					{
+						close(fd[j][0]);
+						close(fd[j][1]);
+					}
+					dup2(fd[i][1], STDOUT_FILENO);
+					dup2(fd[i - 1][0], STDIN_FILENO);
+					close(fd[i][0]);
+					close(fd[i][1]);
+					close(fd[i - 1][0]);
+					close(fd[i - 1][1]);
+					execvp(conv->data[i][0], conv->data[i]);
+					_exit(200);
+				}
+			}
+			if (i > 0 && i < commands_num - 1)
+			{
+				close(fd[i - 1][0]);
+				close(fd[i - 1][1]);
+			}
+			if (i == commands_num - 1)
+			{
+				close(fd[i - 1][0]);
+				close(fd[i - 1][1]);
+			}
+		}
 	}
 }
 
