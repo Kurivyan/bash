@@ -1,3 +1,3 @@
 <p align=”center”>
-<img src=”https://user-images.githubusercontent.com/75753187/123358567-aac7b900-d539-11eb-8275-0b380264bb4c.png" alt=”my banner”>
+<img src=”[![banner.png](https://i.postimg.cc/9fkZ1DXD/banner.png)](https://postimg.cc/v1W4ZHVy)" alt=”my banner”>
 </p>
