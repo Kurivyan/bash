@@ -1,3 +1,1 @@
-<p align=”center”>
-<img src=”[![banner.png](https://i.postimg.cc/9fkZ1DXD/banner.png)](https://postimg.cc/v1W4ZHVy)" alt=”my banner”>
-</p>
+[![banner.png](https://i.postimg.cc/9fkZ1DXD/banner.png)](https://postimg.cc/v1W4ZHVy)
