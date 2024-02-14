@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#include <fcntl.h>
 
 struct conv
 {
@@ -253,7 +254,38 @@ char *read_func()
 	return ptr;
 }
 
-void file_redirecting() {}
+void file_redirecting(char **data)
+{
+	char *word;
+	int fd;
+	int pipe[2];
+	int i = 0;
+	while (1)
+	{
+		word = data[i];
+		if (word == NULL)
+			break;
+		if (strcmp(word, ">") == 0)
+		{
+			fd = open(data[i + 1], O_CREAT | O_WRONLY | O_EXCL, 0666);
+			dup2(STDOUT_FILENO, pipe[1]);
+			close(pipe[1]);
+			dup2(fd, STDOUT_FILENO);
+			close(fd);
+			data[i] = NULL;
+		}
+		if (strcmp(word, "<") == 0)
+		{
+			fd = open(data[i + 1], O_CREAT, O_RDWR | 0666);
+			dup2(STDIN_FILENO, pipe[0]);
+			close(pipe[0]);
+			dup2(fd, STDIN_FILENO);
+			close(fd);
+			data[i] = NULL;
+		}
+		i++;
+	}
+}
 
 void execute_conv(struct conv *conv)
 {
@@ -264,7 +296,7 @@ void execute_conv(struct conv *conv)
 		pid_procc = fork();
 		if (pid_procc == 0)
 		{
-			file_redirecting();
+			file_redirecting(conv->data[0]);
 			execvp(conv->data[0][0], conv->data[0]);
 			_exit(200);
 		}
@@ -280,6 +312,7 @@ void execute_conv(struct conv *conv)
 			dup2(fd[1], STDOUT_FILENO);
 			close(fd[0]);
 			close(fd[1]);
+			file_redirecting(conv->data[0]);
 			execvp(conv->data[0][0], conv->data[0]);
 			_exit(200);
 		}
@@ -289,6 +322,7 @@ void execute_conv(struct conv *conv)
 			dup2(fd[0], STDIN_FILENO);
 			close(fd[0]);
 			close(fd[1]);
+			file_redirecting(conv->data[1]);
 			execvp(conv->data[1][0], conv->data[1]);
 		}
 		close(fd[0]);
@@ -323,6 +357,7 @@ void execute_conv(struct conv *conv)
 						close(fd[j][0]);
 						close(fd[j][1]);
 					}
+					file_redirecting(conv->data[i]);
 					execvp(conv->data[i][0], conv->data[i]);
 					_exit(200);
 				}
@@ -336,6 +371,7 @@ void execute_conv(struct conv *conv)
 						close(fd[j][0]);
 						close(fd[j][1]);
 					}
+					file_redirecting(conv->data[i]);
 					execvp(conv->data[i][0], conv->data[i]);
 					_exit(200);
 				}
@@ -357,6 +393,7 @@ void execute_conv(struct conv *conv)
 					close(fd[i][1]);
 					close(fd[i - 1][0]);
 					close(fd[i - 1][1]);
+					file_redirecting(conv->data[i]);
 					execvp(conv->data[i][0], conv->data[i]);
 					_exit(200);
 				}
