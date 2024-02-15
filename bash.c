@@ -22,19 +22,69 @@ struct node
 	struct node *next;
 };
 
+struct group_pr
+{
+	pid_t pid;
+	int status;
+	struct group_pr *next;
+};
+
 struct group
 {
 	pid_t group_leader;
-	int size;
-	pid_t *slaves;
+	int status;
+	struct group_pr *gr_pr;
 	struct group *next;
 };
 
-struct group *creat_group(int i)
+struct group_pr *creat_group_pr(pid_t pid)
+{
+	struct group_pr *ptr = malloc(sizeof(struct group_pr));
+	ptr->pid = pid;
+	ptr->status = 0;
+	ptr->next = NULL;
+}
+
+void insert_group_pr(struct group_pr **head, pid_t target_pid)
+{
+	if (*head == NULL)
+	{
+		*head = creat_group_pr(target_pid);
+		return;
+	}
+
+	struct group_pr *cur = *head;
+
+	while (cur->next != NULL)
+	{
+		cur = cur->next;
+	}
+	cur->next = creat_group_pr(target_pid);
+}
+
+struct group *creat_group(pid_t leader)
 {
 	struct group *ptr = malloc(sizeof(struct group));
-	ptr->size = i;
-	ptr->slaves = malloc(sizeof(pid_t) * ptr->size);
+	ptr->group_leader = leader;
+	ptr->status = 0;
+	ptr->gr_pr = NULL;
+	ptr->next = NULL;
+	return ptr;
+}
+
+void insert_group(struct group **head, struct group *insertance)
+{
+	if (*head == NULL)
+	{
+		*head = insertance;
+		return;
+	}
+	struct group *cur = *head;
+	while (cur->next != NULL)
+	{
+		cur = cur->next;
+	}
+	cur->next = insertance;
 }
 
 struct conv *create_conv()
@@ -267,7 +317,16 @@ void file_redirecting(char **data)
 			break;
 		if (strcmp(word, ">") == 0)
 		{
-			fd = open(data[i + 1], O_CREAT | O_WRONLY | O_EXCL, 0666);
+			fd = open(data[i + 1], O_CREAT | O_WRONLY, 0666);
+			dup2(STDOUT_FILENO, pipe[1]);
+			close(pipe[1]);
+			dup2(fd, STDOUT_FILENO);
+			close(fd);
+			data[i] = NULL;
+		}
+		if (strcmp(word, ">>") == 0)
+		{
+			fd = open(data[i + 1], O_CREAT | O_WRONLY | O_APPEND, 0666);
 			dup2(STDOUT_FILENO, pipe[1]);
 			close(pipe[1]);
 			dup2(fd, STDOUT_FILENO);
@@ -276,7 +335,7 @@ void file_redirecting(char **data)
 		}
 		if (strcmp(word, "<") == 0)
 		{
-			fd = open(data[i + 1], O_CREAT, O_RDWR | 0666);
+			fd = open(data[i + 1], O_CREAT | O_RDONLY);
 			dup2(STDIN_FILENO, pipe[0]);
 			close(pipe[0]);
 			dup2(fd, STDIN_FILENO);
@@ -287,15 +346,20 @@ void file_redirecting(char **data)
 	}
 }
 
-void execute_conv(struct conv *conv)
+void execute_conv(struct conv *conv, struct group **group_head)
 {
 	int commands_num = conv->commands_count;
 	if (commands_num == 1) // простой вариант играем от одного процесса
 	{
-		pid_t pid_procc = 0;
-		pid_procc = fork();
-		if (pid_procc == 0)
+		pid_t pid1 = 0;
+		pid1 = fork();
+		setpgid(pid1, pid1);
+		struct group *conv_group = creat_group(pid1);
+		insert_group_pr(&(conv_group->gr_pr), pid1);
+		insert_group(group_head, conv_group);
+		if (pid1 == 0)
 		{
+			setpgid(getpid(), getpid());
 			file_redirecting(conv->data[0]);
 			execvp(conv->data[0][0], conv->data[0]);
 			_exit(200);
@@ -307,8 +371,12 @@ void execute_conv(struct conv *conv)
 		pipe(fd);
 		pid_t pid1 = 0, pid2 = 0;
 		pid1 = fork();
+		setpgid(pid1, pid1);
+		struct group *conv_group = creat_group(pid1);
+		insert_group_pr(&(conv_group->gr_pr), pid1);
 		if (pid1 == 0)
 		{
+			setpgid(getpid(), getpid());
 			dup2(fd[1], STDOUT_FILENO);
 			close(fd[0]);
 			close(fd[1]);
@@ -317,8 +385,12 @@ void execute_conv(struct conv *conv)
 			_exit(200);
 		}
 		pid2 = fork();
+		setpgid(pid2, pid1);
+		insert_group_pr(&(conv_group->gr_pr), pid2);
+		insert_group(group_head, conv_group);
 		if (pid2 == 0)
 		{
+			setpgid(getpid(), pid1);
 			dup2(fd[0], STDIN_FILENO);
 			close(fd[0]);
 			close(fd[1]);
@@ -342,11 +414,20 @@ void execute_conv(struct conv *conv)
 			conv_pids[i] = 0;
 		}
 
+		struct group *conv_group = NULL;
 		for (int i = 0; i < commands_num; i++)
 		{
 			conv_pids[i] = fork();
 			if (conv_pids[i] == 0)
 			{
+				if (i == 0)
+				{
+					setpgid(getpid(), getpid());
+				}
+				else
+				{
+					setpgid(getpid(), conv_pids[0]);
+				}
 				if (i == 0)
 				{
 					dup2(fd[i][1], STDOUT_FILENO);
@@ -398,6 +479,19 @@ void execute_conv(struct conv *conv)
 					_exit(200);
 				}
 			}
+			if (i == 0)
+			{
+				setpgid(conv_pids[i], conv_pids[i]);
+				conv_group = creat_group(conv_pids[i]);
+				insert_group_pr(&(conv_group->gr_pr), conv_pids[i]);
+			}
+			else
+			{
+				setpgid(conv_pids[i], conv_pids[0]);
+				insert_group_pr(&(conv_group->gr_pr), conv_pids[i]);
+				if (i == commands_num - 1)
+					insert_group(group_head, conv_group);
+			}
 			if (i > 0 && i < commands_num - 1)
 			{
 				close(fd[i - 1][0]);
@@ -412,7 +506,7 @@ void execute_conv(struct conv *conv)
 	}
 }
 
-void execute(struct node *head)
+void execute(struct node *head, struct group **group)
 {
 	while (head->next != NULL)
 	{
@@ -428,7 +522,7 @@ void execute(struct node *head)
 			cur_conv = cur_conv->next;
 			j--;
 		}
-		execute_conv(cur_conv);
+		execute_conv(cur_conv, group);
 	}
 }
 
@@ -436,6 +530,8 @@ int main()
 {
 	struct node *head;
 	head = NULL;
+	struct group *group_head;
+	group_head = NULL;
 	char *ptr;
 	while (1)
 	{
@@ -444,7 +540,7 @@ int main()
 		if (ptr == NULL)
 			continue;
 		insert_command(&head, ptr);
-		execute(head);
+		execute(head, &group_head);
 	}
 	return 0;
 }
