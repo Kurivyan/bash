@@ -38,6 +38,28 @@ struct group
 	struct group *next;
 };
 
+// < -- -- -- -- -- -- -->
+struct node *create_node(char *);
+struct conv *create_conv();
+struct group *creat_group();
+struct group_pr *creat_group_pr(pid_t);
+void insert_command(struct node **, char *);
+void insert_group(struct group **, struct group *);
+void insert_group_pr(struct group_pr **, pid_t);
+char *read_func();
+char *destructorize(char *);
+void execute(struct node *, struct group **);
+void execute_conv(struct conv *, struct group **);
+void file_redirecting(char **);
+void return_signals();
+void print_beautiful_line();
+void collect_jobs(struct group *);
+// < -- -- -- -- -- -- -->
+
+void print_beautiful_line()
+{
+}
+
 struct group_pr *creat_group_pr(pid_t pid)
 {
 	struct group_pr *ptr = malloc(sizeof(struct group_pr));
@@ -568,6 +590,24 @@ void execute_conv(struct conv *conv, struct group **group_head)
 	}
 }
 
+int check_conv(struct group_pr* conv){
+	
+}
+
+void collect_jobs(struct group *group_head)
+{
+	while (group_head->next != NULL)
+	{
+		struct group_pr *cur = group_head->gr_pr;
+		while (cur->next != NULL)
+		{
+
+			cur = cur->next;
+		}
+		group_head = group_head->next;
+	}
+}
+
 void execute(struct node *head, struct group **group)
 {
 	while (head->next != NULL)
@@ -606,12 +646,14 @@ int main()
 	char *ptr;
 	while (1)
 	{
+		print_beautiful_line();
 		printf("\e[1;33m > \e[m \n");
 		ptr = read_func();
 		if (ptr == NULL)
 			continue;
 		insert_command(&head, ptr);
 		execute(head, &group_head);
+		collect_jobs(group_head);
 	}
 	return 0;
 }
