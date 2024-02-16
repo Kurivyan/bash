@@ -5,6 +5,7 @@
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <fcntl.h>
+#include <signal.h>
 
 struct conv
 {
@@ -16,7 +17,6 @@ struct conv
 
 struct node
 {
-	int bg_flag;
 	int conv_count;
 	struct conv *head;
 	struct node *next;
@@ -114,7 +114,6 @@ struct node *create_node(char *command)
 {
 	struct node *ptr = calloc(1, sizeof(struct node));
 	ptr->conv_count = 1;
-	ptr->bg_flag = 0;
 	ptr->head = create_conv();
 	ptr->next = NULL;
 	return ptr;
@@ -181,7 +180,7 @@ void insert_command(struct node **head, char *command)
 			curent_conv->data[i_conv_command][i_conv_command_word] = NULL;
 			break;
 		}
-		if (strcmp(part, "||") == 0 || strcmp(part, "&&") == 0 || strcmp(part, ";") == 0)
+		if (strcmp(part, "||") == 0 || strcmp(part, "&&") == 0 || strcmp(part, ";") == 0 || strcmp(part, "&") == 0)
 		{
 			node->conv_count += 1;
 			curent_conv->next = create_conv();
@@ -346,24 +345,40 @@ void file_redirecting(char **data)
 	}
 }
 
+void check_task_in_active(struct conv *conv)
+{
+}
+
+void return_signals()
+{
+	signal(SIGINT, SIG_IGN);
+	signal(SIGTSTP, SIG_DFL);
+	signal(SIGTTIN, SIG_DFL);
+	signal(SIGTTOU, SIG_DFL);
+	signal(SIGTERM, SIG_DFL);
+	signal(SIGQUIT, SIG_DFL);
+}
+
 void execute_conv(struct conv *conv, struct group **group_head)
 {
+	struct group *conv_group = NULL;
 	int commands_num = conv->commands_count;
 	if (commands_num == 1) // простой вариант играем от одного процесса
 	{
 		pid_t pid1 = 0;
 		pid1 = fork();
-		setpgid(pid1, pid1);
-		struct group *conv_group = creat_group(pid1);
-		insert_group_pr(&(conv_group->gr_pr), pid1);
-		insert_group(group_head, conv_group);
 		if (pid1 == 0)
 		{
+			return_signals();
 			setpgid(getpid(), getpid());
 			file_redirecting(conv->data[0]);
 			execvp(conv->data[0][0], conv->data[0]);
 			_exit(200);
 		}
+		setpgid(pid1, pid1);
+		conv_group = creat_group(pid1);
+		insert_group_pr(&(conv_group->gr_pr), pid1);
+		insert_group(group_head, conv_group);
 	}
 	if (commands_num == 2) // продвинутый вариант, от двух процессов
 	{
@@ -371,11 +386,9 @@ void execute_conv(struct conv *conv, struct group **group_head)
 		pipe(fd);
 		pid_t pid1 = 0, pid2 = 0;
 		pid1 = fork();
-		setpgid(pid1, pid1);
-		struct group *conv_group = creat_group(pid1);
-		insert_group_pr(&(conv_group->gr_pr), pid1);
 		if (pid1 == 0)
 		{
+			return_signals();
 			setpgid(getpid(), getpid());
 			dup2(fd[1], STDOUT_FILENO);
 			close(fd[0]);
@@ -384,12 +397,13 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			execvp(conv->data[0][0], conv->data[0]);
 			_exit(200);
 		}
+		setpgid(pid1, pid1);
+		conv_group = creat_group(pid1);
+		insert_group_pr(&(conv_group->gr_pr), pid1);
 		pid2 = fork();
-		setpgid(pid2, pid1);
-		insert_group_pr(&(conv_group->gr_pr), pid2);
-		insert_group(group_head, conv_group);
 		if (pid2 == 0)
 		{
+			return_signals();
 			setpgid(getpid(), pid1);
 			dup2(fd[0], STDIN_FILENO);
 			close(fd[0]);
@@ -397,11 +411,15 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			file_redirecting(conv->data[1]);
 			execvp(conv->data[1][0], conv->data[1]);
 		}
+		setpgid(pid2, pid1);
+		insert_group_pr(&(conv_group->gr_pr), pid2);
+		insert_group(group_head, conv_group);
 		close(fd[0]);
 		close(fd[1]);
 	}
 	if (commands_num > 2) // гроб вариант от трех процессов
 	{
+		// check_task_in_active();
 		int fd[commands_num - 1][2];
 		for (int i = 0; i < commands_num - 1; i++)
 		{
@@ -414,12 +432,12 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			conv_pids[i] = 0;
 		}
 
-		struct group *conv_group = NULL;
 		for (int i = 0; i < commands_num; i++)
 		{
 			conv_pids[i] = fork();
 			if (conv_pids[i] == 0)
 			{
+				return_signals();
 				if (i == 0)
 				{
 					setpgid(getpid(), getpid());
@@ -528,6 +546,13 @@ void execute(struct node *head, struct group **group)
 
 int main()
 {
+	// signal(SIGINT, SIG_IGN);
+	signal(SIGTSTP, SIG_IGN);
+	signal(SIGTTIN, SIG_IGN);
+	signal(SIGTTOU, SIG_IGN);
+	signal(SIGTERM, SIG_IGN);
+	signal(SIGQUIT, SIG_IGN);
+
 	struct node *head;
 	head = NULL;
 	struct group *group_head;
