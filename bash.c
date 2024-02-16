@@ -13,6 +13,7 @@ struct conv
 	char *start_flag;
 	char ***data;
 	struct conv *next;
+	int bg_flag;
 };
 
 struct node
@@ -25,14 +26,14 @@ struct node
 struct group_pr
 {
 	pid_t pid;
-	int status;
+	int status; // 1 - выполняется 2 - приостановлен 3 - завершился
 	struct group_pr *next;
 };
 
 struct group
 {
 	pid_t group_leader;
-	int status;
+	int status; // 1 - выполняется 2 - приостановлена 3 - завершена
 	struct group_pr *gr_pr;
 	struct group *next;
 };
@@ -62,10 +63,10 @@ void insert_group_pr(struct group_pr **head, pid_t target_pid)
 	cur->next = creat_group_pr(target_pid);
 }
 
-struct group *creat_group(pid_t leader)
+struct group *creat_group()
 {
 	struct group *ptr = malloc(sizeof(struct group));
-	ptr->group_leader = leader;
+	ptr->group_leader = 0;
 	ptr->status = 0;
 	ptr->gr_pr = NULL;
 	ptr->next = NULL;
@@ -106,6 +107,7 @@ struct conv *create_conv()
 	ptr->commands_count = 1;
 	ptr->start_flag = NULL;
 	ptr->data = temp;
+	ptr->bg_flag = 0;
 	ptr->next = NULL;
 	return ptr;
 }
@@ -185,6 +187,10 @@ void insert_command(struct node **head, char *command)
 			node->conv_count += 1;
 			curent_conv->next = create_conv();
 			curent_conv->data[i_conv_command][i_conv_command_word] = NULL;
+			if (strcmp(part, "&") == 0)
+			{
+				curent_conv->bg_flag = 1;
+			}
 			curent_conv = curent_conv->next;
 			i_conv_command = 0;
 			i_conv_command_word = 0;
@@ -193,6 +199,7 @@ void insert_command(struct node **head, char *command)
 			part = destructorize(command);
 			continue;
 		}
+
 		if (strcmp(part, "|") == 0)
 		{
 			curent_conv->commands_count += 1;
@@ -345,10 +352,6 @@ void file_redirecting(char **data)
 	}
 }
 
-void check_task_in_active(struct conv *conv)
-{
-}
-
 void return_signals()
 {
 	signal(SIGINT, SIG_IGN);
@@ -362,6 +365,10 @@ void return_signals()
 void execute_conv(struct conv *conv, struct group **group_head)
 {
 	struct group *conv_group = NULL;
+	if (conv->bg_flag == 1)
+	{
+		conv_group = creat_group();
+	}
 	int commands_num = conv->commands_count;
 	if (commands_num == 1) // простой вариант играем от одного процесса
 	{
@@ -376,9 +383,17 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			_exit(200);
 		}
 		setpgid(pid1, pid1);
-		conv_group = creat_group(pid1);
-		insert_group_pr(&(conv_group->gr_pr), pid1);
-		insert_group(group_head, conv_group);
+		if (conv->bg_flag == 1)
+		{
+			insert_group_pr(&(conv_group->gr_pr), pid1);
+			conv_group->group_leader = conv_group->gr_pr->pid;
+			insert_group(group_head, conv_group);
+			return;
+		}
+		tcsetpgrp(STDIN_FILENO, pid1);
+		int status;
+		waitpid(-pid1, &status, 0);
+		tcsetpgrp(STDIN_FILENO, getpid());
 	}
 	if (commands_num == 2) // продвинутый вариант, от двух процессов
 	{
@@ -398,8 +413,10 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			_exit(200);
 		}
 		setpgid(pid1, pid1);
-		conv_group = creat_group(pid1);
-		insert_group_pr(&(conv_group->gr_pr), pid1);
+		if (conv->bg_flag == 1)
+		{
+			insert_group_pr(&(conv_group->gr_pr), pid1);
+		}
 		pid2 = fork();
 		if (pid2 == 0)
 		{
@@ -412,14 +429,25 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			execvp(conv->data[1][0], conv->data[1]);
 		}
 		setpgid(pid2, pid1);
-		insert_group_pr(&(conv_group->gr_pr), pid2);
-		insert_group(group_head, conv_group);
+		if (conv->bg_flag == 1)
+		{
+			insert_group_pr(&(conv_group->gr_pr), pid2);
+			conv_group->group_leader = conv_group->gr_pr->pid;
+			insert_group(group_head, conv_group);
+			return;
+		}
+		tcsetpgrp(STDIN_FILENO, pid1);
+		int status;
+		for (int i = 0; i < 2; i++)
+		{
+			waitpid(-pid1, &status, 0);
+		}
+		tcsetpgrp(STDIN_FILENO, getpid());
 		close(fd[0]);
 		close(fd[1]);
 	}
 	if (commands_num > 2) // гроб вариант от трех процессов
 	{
-		// check_task_in_active();
 		int fd[commands_num - 1][2];
 		for (int i = 0; i < commands_num - 1; i++)
 		{
@@ -497,19 +525,6 @@ void execute_conv(struct conv *conv, struct group **group_head)
 					_exit(200);
 				}
 			}
-			if (i == 0)
-			{
-				setpgid(conv_pids[i], conv_pids[i]);
-				conv_group = creat_group(conv_pids[i]);
-				insert_group_pr(&(conv_group->gr_pr), conv_pids[i]);
-			}
-			else
-			{
-				setpgid(conv_pids[i], conv_pids[0]);
-				insert_group_pr(&(conv_group->gr_pr), conv_pids[i]);
-				if (i == commands_num - 1)
-					insert_group(group_head, conv_group);
-			}
 			if (i > 0 && i < commands_num - 1)
 			{
 				close(fd[i - 1][0]);
@@ -520,7 +535,36 @@ void execute_conv(struct conv *conv, struct group **group_head)
 				close(fd[i - 1][0]);
 				close(fd[i - 1][1]);
 			}
+			if (i == 0)
+			{
+				setpgid(conv_pids[i], conv_pids[i]);
+				if (conv->bg_flag == 1)
+				{
+					insert_group_pr(&(conv_group->gr_pr), conv_pids[i]);
+				}
+			}
+			else
+			{
+				setpgid(conv_pids[i], conv_pids[0]);
+				if (conv->bg_flag == 1)
+				{
+					insert_group_pr(&(conv_group->gr_pr), conv_pids[i]);
+					if (i == commands_num - 1)
+					{
+						conv_group->group_leader = conv_group->gr_pr->pid;
+						insert_group(group_head, conv_group);
+						return;
+					}
+				}
+			}
 		}
+		tcsetpgrp(STDIN_FILENO, conv_pids[0]);
+		int status;
+		for (int i = 0; i < conv->commands_count; i++)
+		{
+			waitpid(-(conv_pids[0]), &status, 0);
+		}
+		tcsetpgrp(STDIN_FILENO, getpid());
 	}
 }
 
@@ -552,6 +596,8 @@ int main()
 	signal(SIGTTOU, SIG_IGN);
 	signal(SIGTERM, SIG_IGN);
 	signal(SIGQUIT, SIG_IGN);
+
+	tcsetpgrp(STDIN_FILENO, getpid());
 
 	struct node *head;
 	head = NULL;
