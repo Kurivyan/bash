@@ -390,6 +390,7 @@ void execute_conv(struct conv *conv, struct group **group_head)
 		conv_group = creat_group();
 	}
 	int commands_num = conv->commands_count;
+
 	if (commands_num == 1) // простой вариант играем от одного процесса
 	{
 		pid_t pid1 = 0;
@@ -402,9 +403,6 @@ void execute_conv(struct conv *conv, struct group **group_head)
 		}
 		if (pid1 == 0)
 		{
-			setpgid(getpid(), getpid());
-			if (conv->bg_flag == 0)
-				tcsetpgrp(STDIN_FILENO, getpid());
 			return_signals();
 			file_redirecting(conv->data[0]);
 			execvp(conv->data[0][0], conv->data[0]);
@@ -420,7 +418,7 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			return;
 		}
 		int status;
-		waitpid(-pid1, &status, 0);
+		waitpid(pid1, &status, 0);
 		tcsetpgrp(STDIN_FILENO, getpid());
 	}
 	if (commands_num == 2) // продвинутый вариант, от двух процессов
@@ -438,9 +436,6 @@ void execute_conv(struct conv *conv, struct group **group_head)
 		}
 		if (pid1 == 0)
 		{
-			setpgid(getpid(), getpid());
-			if (conv->bg_flag == 0)
-				tcsetpgrp(STDIN_FILENO, getpid());
 			return_signals();
 			dup2(fd[1], STDOUT_FILENO);
 			close(fd[0]);
@@ -459,13 +454,10 @@ void execute_conv(struct conv *conv, struct group **group_head)
 		pid2 = fork();
 		if (pid2 > 0)
 		{
-			setpgid(getpid(), pid1);
+			setpgid(pid2, pid1);
 		}
 		if (pid2 == 0)
 		{
-			setpgid(getpid(), pid1);
-			if (conv->bg_flag == 0)
-				tcsetpgrp(STDIN_FILENO, pid1);
 			return_signals();
 			dup2(fd[0], STDIN_FILENO);
 			close(fd[0]);
@@ -519,21 +511,14 @@ void execute_conv(struct conv *conv, struct group **group_head)
 					if (conv->bg_flag == 0)
 						tcsetpgrp(STDIN_FILENO, conv_pids[i]);
 				}
+				else
+				{
+					setpgid(conv_pids[i], conv_pids[0]);
+				}
 			}
 			if (conv_pids[i] == 0)
 			{
-				if (i == 0)
-				{
-					setpgid(getpid(), getpid());
-					if (conv->bg_flag == 0)
-						tcsetpgrp(STDIN_FILENO, getpid());
-					return_signals();
-				}
-				else
-				{
-					setpgid(getpid(), conv_pids[0]);
-					return_signals();
-				}
+				return_signals();
 				if (i == 0)
 				{
 					dup2(fd[i][1], STDOUT_FILENO);
@@ -671,12 +656,16 @@ void execute(struct node *head, struct group **group)
 
 int main()
 {
-	// signal(SIGINT, SIG_IGN);
+	signal(SIGINT, SIG_IGN);
 	signal(SIGTSTP, SIG_IGN);
 	signal(SIGTTIN, SIG_IGN);
 	signal(SIGTTOU, SIG_IGN);
 	signal(SIGTERM, SIG_IGN);
 	signal(SIGQUIT, SIG_IGN);
+
+	printf("Terminal have pid & pgrp : %d\n", getpgrp());
+
+	setpgid(getpid(), getpid());
 
 	struct node *head;
 	head = NULL;
