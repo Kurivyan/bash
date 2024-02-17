@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <bits/waitflags.h>
 
 struct conv
 {
@@ -26,13 +27,14 @@ struct node
 struct group_pr
 {
 	pid_t pid;
-	int status; // 1 - выполняется 2 - приостановлен 3 - завершился
+	int status;
 	struct group_pr *next;
 };
 
 struct group
 {
 	pid_t group_leader;
+	int size;
 	int status; // 1 - выполняется 2 - приостановлена 3 - завершена
 	struct group_pr *gr_pr;
 	struct group *next;
@@ -52,13 +54,8 @@ void execute(struct node *, struct group **);
 void execute_conv(struct conv *, struct group **);
 void file_redirecting(char **);
 void return_signals();
-void print_beautiful_line();
 void collect_jobs(struct group *);
 // < -- -- -- -- -- -- -->
-
-void print_beautiful_line()
-{
-}
 
 struct group_pr *creat_group_pr(pid_t pid)
 {
@@ -89,6 +86,7 @@ struct group *creat_group()
 {
 	struct group *ptr = malloc(sizeof(struct group));
 	ptr->group_leader = 0;
+	ptr->size = 0;
 	ptr->status = 0;
 	ptr->gr_pr = NULL;
 	ptr->next = NULL;
@@ -402,12 +400,13 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			setpgid(getpid(), getpid());
 			file_redirecting(conv->data[0]);
 			execvp(conv->data[0][0], conv->data[0]);
-			_exit(200);
+			exit(1);
 		}
 		setpgid(pid1, pid1);
 		if (conv->bg_flag == 1)
 		{
 			insert_group_pr(&(conv_group->gr_pr), pid1);
+			conv_group->size++;
 			conv_group->group_leader = conv_group->gr_pr->pid;
 			insert_group(group_head, conv_group);
 			return;
@@ -432,12 +431,13 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			close(fd[1]);
 			file_redirecting(conv->data[0]);
 			execvp(conv->data[0][0], conv->data[0]);
-			_exit(200);
+			exit(1);
 		}
 		setpgid(pid1, pid1);
 		if (conv->bg_flag == 1)
 		{
 			insert_group_pr(&(conv_group->gr_pr), pid1);
+			conv_group->size++;
 		}
 		pid2 = fork();
 		if (pid2 == 0)
@@ -449,11 +449,13 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			close(fd[1]);
 			file_redirecting(conv->data[1]);
 			execvp(conv->data[1][0], conv->data[1]);
+			exit(1);
 		}
 		setpgid(pid2, pid1);
 		if (conv->bg_flag == 1)
 		{
 			insert_group_pr(&(conv_group->gr_pr), pid2);
+			conv_group->size++;
 			conv_group->group_leader = conv_group->gr_pr->pid;
 			insert_group(group_head, conv_group);
 			return;
@@ -508,7 +510,7 @@ void execute_conv(struct conv *conv, struct group **group_head)
 					}
 					file_redirecting(conv->data[i]);
 					execvp(conv->data[i][0], conv->data[i]);
-					_exit(200);
+					exit(1);
 				}
 				if (i == commands_num - 1)
 				{
@@ -522,7 +524,7 @@ void execute_conv(struct conv *conv, struct group **group_head)
 					}
 					file_redirecting(conv->data[i]);
 					execvp(conv->data[i][0], conv->data[i]);
-					_exit(200);
+					exit(1);
 				}
 				if (i > 0)
 				{
@@ -544,7 +546,7 @@ void execute_conv(struct conv *conv, struct group **group_head)
 					close(fd[i - 1][1]);
 					file_redirecting(conv->data[i]);
 					execvp(conv->data[i][0], conv->data[i]);
-					_exit(200);
+					exit(1);
 				}
 			}
 			if (i > 0 && i < commands_num - 1)
@@ -563,6 +565,7 @@ void execute_conv(struct conv *conv, struct group **group_head)
 				if (conv->bg_flag == 1)
 				{
 					insert_group_pr(&(conv_group->gr_pr), conv_pids[i]);
+					conv_group->size++;
 				}
 			}
 			else
@@ -571,6 +574,7 @@ void execute_conv(struct conv *conv, struct group **group_head)
 				if (conv->bg_flag == 1)
 				{
 					insert_group_pr(&(conv_group->gr_pr), conv_pids[i]);
+					conv_group->size++;
 					if (i == commands_num - 1)
 					{
 						conv_group->group_leader = conv_group->gr_pr->pid;
@@ -590,18 +594,37 @@ void execute_conv(struct conv *conv, struct group **group_head)
 	}
 }
 
-int check_conv(struct group_pr* conv){
-	
-}
-
 void collect_jobs(struct group *group_head)
 {
-	while (group_head->next != NULL)
+	while (group_head != NULL)
 	{
 		struct group_pr *cur = group_head->gr_pr;
-		while (cur->next != NULL)
+		while (cur != NULL)
 		{
+			waitpid(cur->pid, &(cur->status), WNOHANG | WCONTINUED | WUNTRACED);
+			cur = cur->next;
+		}
 
+		cur = group_head->gr_pr;
+		for (int i = 0; i < group_head->size; i++)
+		{
+			if (WIFEXITED(cur->status))
+			{
+				if (WIFSTOPPED(cur->status))
+				{
+					group_head->status = 2;
+					break;
+				}
+				if (WIFCONTINUED(cur->status))
+				{
+					group_head->status = 1;
+					break;
+				}
+			}
+			else
+			{
+				group_head->status = 3;
+			}
 			cur = cur->next;
 		}
 		group_head = group_head->next;
@@ -646,7 +669,6 @@ int main()
 	char *ptr;
 	while (1)
 	{
-		print_beautiful_line();
 		printf("\e[1;33m > \e[m \n");
 		ptr = read_func();
 		if (ptr == NULL)
