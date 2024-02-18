@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <bits/waitflags.h>
+#include <errno.h>
 
 struct conv
 {
@@ -204,13 +205,25 @@ void insert_command(struct node **head, char *command)
 		}
 		if (strcmp(part, "||") == 0 || strcmp(part, "&&") == 0 || strcmp(part, ";") == 0 || strcmp(part, "&") == 0)
 		{
-			node->conv_count += 1;
-			curent_conv->next = create_conv();
-			curent_conv->data[i_conv_command][i_conv_command_word] = NULL;
 			if (strcmp(part, "&") == 0)
 			{
 				curent_conv->bg_flag = 1;
 			}
+
+			char *test = destructorize(command);
+			if (test == NULL)
+			{
+				curent_conv->data[i_conv_command][i_conv_command_word] = NULL;
+				break;
+			}
+			else
+			{
+				strcpy(part, test);
+				continue;
+			}
+			node->conv_count += 1;
+			curent_conv->next = create_conv();
+			curent_conv->data[i_conv_command][i_conv_command_word] = NULL;
 			curent_conv = curent_conv->next;
 			i_conv_command = 0;
 			i_conv_command_word = 0;
@@ -390,7 +403,6 @@ void execute_conv(struct conv *conv, struct group **group_head)
 		conv_group = creat_group();
 	}
 	int commands_num = conv->commands_count;
-
 	if (commands_num == 1) // простой вариант играем от одного процесса
 	{
 		pid_t pid1 = 0;
@@ -461,6 +473,8 @@ void execute_conv(struct conv *conv, struct group **group_head)
 		if (pid2 > 0)
 		{
 			setpgid(pid2, getpgid(pid1));
+			if (conv->bg_flag == 0)
+				tcsetpgrp(STDIN_FILENO, getpgid(pid1));
 		}
 		if (pid2 == 0)
 		{
@@ -476,6 +490,9 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			exit(1);
 		}
 
+		close(fd[0]);
+		close(fd[1]);
+
 		if (conv->bg_flag == 1)
 		{
 			insert_group_pr(&(conv_group->gr_pr), pid2);
@@ -485,13 +502,10 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			return;
 		}
 
-		close(fd[0]);
-		close(fd[1]);
-
 		int status;
 		for (int i = 0; i < 2; i++)
 		{
-			waitpid(-pid1, &status, 0);
+			waitpid(-(pid1), &status, 0);
 		}
 		tcsetpgrp(STDIN_FILENO, getpgid(0));
 	}
@@ -516,9 +530,9 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			{
 				if (i == 0)
 				{
-					setpgid(conv_pids[i], conv_pids[i]);
+					setpgid(conv_pids[0], conv_pids[0]);
 					if (conv->bg_flag == 0)
-						tcsetpgrp(STDIN_FILENO, getpgid(conv_pids[i]));
+						tcsetpgrp(STDIN_FILENO, getpgid(conv_pids[0]));
 				}
 				else
 				{
@@ -616,6 +630,7 @@ void execute_conv(struct conv *conv, struct group **group_head)
 				}
 			}
 		}
+
 		int status;
 		for (int i = 0; i < conv->commands_count; i++)
 		{
@@ -629,11 +644,10 @@ void collect_jobs(struct group *group_head)
 {
 	while (group_head != NULL)
 	{
-		struct group_pr *conv = group_head->gr_pr;
-		int status = -1;
-		while (conv != NULL)
+		int status = 222;
+		for (int i = 0; i < group_head->size; i++)
 		{
-			waitpid(conv->pid, &status, WUNTRACED | WNOHANG | WCONTINUED);
+			waitpid(-(group_head->group_leader), &status, WUNTRACED | WNOHANG | WCONTINUED);
 			if (WIFEXITED(status))
 			{
 				group_head->status = 3;
@@ -651,7 +665,6 @@ void collect_jobs(struct group *group_head)
 					break;
 				}
 			}
-			conv = conv->next;
 		}
 		group_head = group_head->next;
 	}
@@ -686,6 +699,9 @@ int main()
 	signal(SIGTERM, SIG_IGN);
 	signal(SIGQUIT, SIG_IGN);
 
+	setpgid(0, 0);
+	tcsetpgrp(STDIN_FILENO, getpgid(0));
+
 	struct node *head;
 	head = NULL;
 	struct group *group_head;
@@ -699,6 +715,7 @@ int main()
 			continue;
 		insert_command(&head, ptr);
 		execute(head, &group_head);
+		printf("In charge : %d \n", tcgetpgrp(STDIN_FILENO));
 		collect_jobs(group_head);
 	}
 	return 0;
