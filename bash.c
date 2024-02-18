@@ -21,6 +21,8 @@ struct conv
 struct node
 {
 	int conv_count;
+	int block_and_flag;
+	int block_or_flag;
 	struct conv *head;
 	struct node *next;
 };
@@ -52,7 +54,7 @@ void insert_group_pr(struct group_pr **, pid_t);
 char *read_func();
 char *destructorize(char *);
 void execute(struct node *, struct group **);
-void execute_conv(struct conv *, struct group **);
+void execute_conv(struct conv *, struct group **, struct node *);
 void file_redirecting(char **);
 void return_signals();
 void collect_jobs(struct group *);
@@ -137,6 +139,8 @@ struct node *create_node(char *command)
 {
 	struct node *ptr = calloc(1, sizeof(struct node));
 	ptr->conv_count = 1;
+	ptr->block_and_flag = 0;
+	ptr->block_or_flag = 0;
 	ptr->head = create_conv();
 	ptr->next = NULL;
 	return ptr;
@@ -208,18 +212,17 @@ void insert_command(struct node **head, char *command)
 			if (strcmp(part, "&") == 0)
 			{
 				curent_conv->bg_flag = 1;
-			}
-
-			char *test = destructorize(command);
-			if (test == NULL)
-			{
-				curent_conv->data[i_conv_command][i_conv_command_word] = NULL;
-				break;
-			}
-			else
-			{
-				strcpy(part, test);
-				continue;
+				char *test = destructorize(command);
+				if (test == NULL)
+				{
+					curent_conv->data[i_conv_command][i_conv_command_word] = NULL;
+					break;
+				}
+				else
+				{
+					strcpy(part, test);
+					continue;
+				}
 			}
 			node->conv_count += 1;
 			curent_conv->next = create_conv();
@@ -395,9 +398,22 @@ void return_signals()
 	signal(SIGQUIT, SIG_DFL);
 }
 
-void execute_conv(struct conv *conv, struct group **group_head)
+void execute_conv(struct conv *conv, struct group **group_head, struct node *node)
 {
 	struct group *conv_group = NULL;
+
+	if (conv->start_flag != NULL)
+	{
+		if (strcmp(conv->start_flag, "||") == 0 && node->block_or_flag == 1)
+		{
+			return;
+		}
+		if (strcmp(conv->start_flag, "&&") == 0 && node->block_and_flag == 1)
+		{
+			return;
+		}
+	}
+
 	if (conv->bg_flag == 1)
 	{
 		conv_group = creat_group();
@@ -434,6 +450,16 @@ void execute_conv(struct conv *conv, struct group **group_head)
 		}
 		int status;
 		waitpid(pid1, &status, 0);
+		if (WEXITSTATUS(status) == 0)
+		{
+			node->block_and_flag = 0;
+			node->block_or_flag = 1;
+		}
+		if (WEXITSTATUS(status) == 1)
+		{
+			node->block_and_flag = 1;
+			node->block_or_flag = 0;
+		}
 		tcsetpgrp(STDIN_FILENO, getpgid(0));
 	}
 	if (commands_num == 2) // продвинутый вариант, от двух процессов
@@ -507,6 +533,7 @@ void execute_conv(struct conv *conv, struct group **group_head)
 		{
 			waitpid(-(pid1), &status, 0);
 		}
+
 		tcsetpgrp(STDIN_FILENO, getpgid(0));
 	}
 	if (commands_num > 2) // гроб вариант от трех процессов
@@ -686,7 +713,7 @@ void execute(struct node *head, struct group **group)
 			cur_conv = cur_conv->next;
 			j--;
 		}
-		execute_conv(cur_conv, group);
+		execute_conv(cur_conv, group, head);
 	}
 }
 
@@ -715,7 +742,6 @@ int main()
 			continue;
 		insert_command(&head, ptr);
 		execute(head, &group_head);
-		printf("In charge : %d \n", tcgetpgrp(STDIN_FILENO));
 		collect_jobs(group_head);
 	}
 	return 0;
