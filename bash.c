@@ -403,10 +403,10 @@ void execute_conv(struct conv *conv, struct group **group_head)
 		}
 		if (pid1 == 0)
 		{
-			return_signals();
 			setpgid(0, 0);
 			if (conv->bg_flag == 0)
 				tcsetpgrp(STDIN_FILENO, getpid());
+			return_signals();
 			file_redirecting(conv->data[0]);
 			execvp(conv->data[0][0], conv->data[0]);
 			exit(1);
@@ -439,10 +439,10 @@ void execute_conv(struct conv *conv, struct group **group_head)
 		}
 		if (pid1 == 0)
 		{
-			return_signals();
 			setpgid(0, 0);
 			if (conv->bg_flag == 0)
 				tcsetpgrp(STDIN_FILENO, getpid());
+			return_signals();
 			dup2(fd[1], STDOUT_FILENO);
 			close(fd[0]);
 			close(fd[1]);
@@ -464,8 +464,8 @@ void execute_conv(struct conv *conv, struct group **group_head)
 		}
 		if (pid2 == 0)
 		{
-			return_signals();
 			setpgid(0, pid1);
+			return_signals();
 			dup2(fd[0], STDIN_FILENO);
 			close(fd[0]);
 			close(fd[1]);
@@ -525,7 +525,6 @@ void execute_conv(struct conv *conv, struct group **group_head)
 			}
 			if (conv_pids[i] == 0)
 			{
-				return_signals();
 				if (i == 0)
 				{
 					setpgid(0, 0);
@@ -536,6 +535,7 @@ void execute_conv(struct conv *conv, struct group **group_head)
 				{
 					setpgid(0, conv_pids[0]);
 				}
+				return_signals();
 				if (i == 0)
 				{
 					dup2(fd[i][1], STDOUT_FILENO);
