@@ -58,6 +58,8 @@ void execute_conv(struct conv *, struct group **, struct node *);
 void file_redirecting(char **);
 void return_signals();
 void collect_jobs(struct group *);
+void execute_if_inner(struct conv *);
+void data_destroyer();
 // < -- -- -- -- -- -- -->
 
 struct group_pr *creat_group_pr(pid_t pid)
@@ -398,10 +400,8 @@ void return_signals()
 	signal(SIGQUIT, SIG_DFL);
 }
 
-void execute_conv(struct conv *conv, struct group **group_head, struct node *node)
+/*void execute_conv(struct conv *conv, struct group **group_head, struct node *node)
 {
-	struct group *conv_group = NULL;
-
 	if (conv->start_flag != NULL) // разграничение конвееров по || && ;
 	{
 		if (strcmp(conv->start_flag, "||") == 0 && node->block_or_flag == 1)
@@ -413,6 +413,13 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 			return;
 		}
 	}
+
+	if (conv->commands_count == 1)
+	{
+		execute_if_inner(conv);
+	}
+
+	struct group *conv_group = NULL;
 
 	if (conv->bg_flag == 1)
 	{
@@ -686,6 +693,65 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 		tcsetpgrp(STDIN_FILENO, getpgrp());
 	}
 }
+*/
+
+void execute_conv(struct conv *conv, struct group **grou_head, struct node *node)
+{
+
+	if (conv->start_flag != NULL) // разграничение конвееров по || && ;
+	{
+		if (strcmp(conv->start_flag, "||") == 0 && node->block_or_flag == 1)
+		{
+			return;
+		}
+		if (strcmp(conv->start_flag, "&&") == 0 && node->block_and_flag == 1)
+		{
+			return;
+		}
+	}
+
+	if (conv->commands_count == 1)
+	{
+		execute_if_inner(conv);
+	}
+
+	struct group *conv_group = NULL;
+	if (conv->bg_flag == 1)
+	{
+		conv_group = creat_group();
+	}
+
+	int conv_size = conv->commands_count;
+
+	int fd[2];
+	for (int i = 0; i < conv_size; i++)
+	{
+		pipe(fd);
+	}
+}
+
+void execute_if_inner(struct conv *conv)
+{
+	if (strcmp(conv->data[0][0], "cd") == 0)
+	{
+		int cd = chdir(conv->data[0][1]);
+		if (cd == -1)
+		{
+			printf("cd : \"Set apropriate path.\"");
+		}
+	}
+	if (strcmp(conv->data[0][0], "quit") == 0)
+	{
+		data_destroyer();
+		kill(getpid(), SIGKILL);
+	}
+	if (strcmp(conv->data[0][0], "jobs") == 0)
+	{
+	}
+	if (strcmp(conv->data[0][0], "kill") == 0)
+	{
+	}
+}
 
 void collect_jobs(struct group *group_head)
 {
@@ -736,6 +802,8 @@ void execute(struct node *head, struct group **group)
 		execute_conv(cur_conv, group, head);
 	}
 }
+
+void data_destroyer() {}
 
 int main()
 {
