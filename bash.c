@@ -30,7 +30,7 @@ struct node
 struct group_pr
 {
 	pid_t pid;
-	int status;
+	int status; // 1 - продолжен || 2 - остановлен || 3 - завершен
 	struct group_pr *next;
 };
 
@@ -38,7 +38,7 @@ struct group
 {
 	pid_t group_leader;
 	int size;
-	int status; // 1 - выполняется 2 - приостановлена 3 - завершена
+	int status; // 1 - выполняется || 2 - приостановлена || 3 - завершена || 4 - завершен, отмечен || 5 - убит
 	struct group_pr *gr_pr;
 	struct group *next;
 };
@@ -57,9 +57,13 @@ void execute(struct node *, struct group **);
 void execute_conv(struct conv *, struct group **, struct node *);
 void file_redirecting(char **);
 void return_signals();
-void collect_jobs(struct group *);
-void execute_if_inner(struct conv *);
+void jobs_control(struct group *);
+int execute_if_inner(struct conv *, struct group *);
 void data_destroyer();
+void print_jobs(struct group *);
+void change_status(struct group_pr *, pid_t, int);
+void return_foreground(pid_t, struct group *);
+void analyze_jobs(struct group *);
 // < -- -- -- -- -- -- -->
 
 struct group_pr *creat_group_pr(pid_t pid)
@@ -270,7 +274,6 @@ void insert_command(struct node **head, char *command)
 
 char *read_func()
 {
-	printf("\e[1;96m");
 	int size = 20;
 	char *ptr = calloc(size, sizeof(char));
 	char c;
@@ -344,7 +347,6 @@ char *read_func()
 		free(ptr);
 		return NULL;
 	}
-	printf("\e[m");
 	return ptr;
 }
 
@@ -417,16 +419,20 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 
 	if (conv->commands_count == 1)
 	{
-		execute_if_inner(conv);
+		if (execute_if_inner(conv, *group_head))
+		{
+			return;
+		}
 	}
+
+	int conv_size = conv->commands_count;
 
 	struct group *conv_group = NULL;
 	if (conv->bg_flag == 1)
 	{
 		conv_group = creat_group();
+		conv_group->size = conv_size;
 	}
-
-	int conv_size = conv->commands_count;
 
 	int infile = STDIN_FILENO;
 	int pid[conv_size];
@@ -452,6 +458,7 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 				setpgid(pid[i], pid[i]);
 				if (conv->bg_flag == 0)
 				{
+					// printf("tcstpgrp on 455 : %d\n", tcsetpgrp(STDIN_FILENO, getpgid(pid[0])));
 					tcsetpgrp(STDIN_FILENO, getpgid(pid[0]));
 				}
 				else
@@ -463,6 +470,7 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 				setpgid(pid[i], getpgid(pid[0]));
 				if (conv->bg_flag == 0)
 				{
+					// printf("tcstpgrp on 466 : %d\n", tcsetpgrp(STDIN_FILENO, getpgid(pid[0])));
 					tcsetpgrp(STDIN_FILENO, getpgid(pid[0]));
 				}
 			}
@@ -480,7 +488,6 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 				else
 				{
 					insert_group_pr(&(conv_group->gr_pr), pid[i]);
-					conv_group->size++;
 					if (i == conv_size - 1)
 					{
 						insert_group(group_head, conv_group);
@@ -495,6 +502,7 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 				setpgid(getpid(), getpid());
 				if (conv->bg_flag == 0)
 				{
+					// printf("tcstpgrp on 498 : %d\n", tcsetpgrp(STDIN_FILENO, getpgrp()));
 					tcsetpgrp(STDIN_FILENO, getpgrp());
 				}
 			}
@@ -503,6 +511,7 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 				setpgid(getpid(), getpgid(pid[0]));
 				if (conv->bg_flag == 0)
 				{
+					// printf("tcstpgrp on 506 : %d\n", tcsetpgrp(STDIN_FILENO, getpgrp()));
 					tcsetpgrp(STDIN_FILENO, getpgrp());
 				}
 			}
@@ -536,7 +545,26 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 	int status;
 	for (int i = 0; i < conv->commands_count; i++)
 	{
-		waitpid(-(pid[0]), &status, 0);
+		waitpid(-(pid[0]), &status, WUNTRACED);
+		if (!WIFEXITED(status))
+		{
+			if (WIFSTOPPED(status))
+			{
+				conv_group = creat_group();
+				conv_group->size = conv_size;
+				for (int i = 0; i < conv_size; i++)
+				{
+					insert_group_pr(&(conv_group->gr_pr), pid[i]);
+				}
+				conv_group->group_leader = conv_group->gr_pr->pid;
+				insert_group(group_head, conv_group);
+				// printf("tcstpgrp on 551 : %d\n", tcsetpgrp(STDIN_FILENO, getpgrp()));
+				node->block_and_flag = 0;
+				node->block_or_flag = 0;
+				tcsetpgrp(STDIN_FILENO, getpgrp());
+				break;
+			}
+		}
 		if (WEXITSTATUS(status) == 0)
 		{
 			node->block_and_flag = 0;
@@ -548,10 +576,11 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 			node->block_or_flag = 0;
 		}
 	}
+	// printf("tcstpgrp on 566 : %d\n", tcsetpgrp(STDIN_FILENO, getpgrp()));
 	tcsetpgrp(STDIN_FILENO, getpgrp());
 }
 
-void execute_if_inner(struct conv *conv)
+int execute_if_inner(struct conv *conv, struct group *group_head)
 {
 	if (strcmp(conv->data[0][0], "cd") == 0)
 	{
@@ -559,46 +588,217 @@ void execute_if_inner(struct conv *conv)
 		if (cd == -1)
 		{
 			printf("cd : \"Set apropriate path.\"");
+			return 1;
 		}
+		return 1;
 	}
 	if (strcmp(conv->data[0][0], "quit") == 0)
 	{
 		data_destroyer();
 		kill(getpid(), SIGKILL);
+		return 1;
 	}
 	if (strcmp(conv->data[0][0], "jobs") == 0)
 	{
+		print_jobs(group_head);
+		return 1;
 	}
 	if (strcmp(conv->data[0][0], "kill") == 0)
 	{
+		if (conv->data[0][1] == NULL)
+		{
+			printf("Enter command in kill <sig> <pid>/[-<pgid>]\n");
+			return 1;
+		}
+
+		if (conv->data[0][2] == NULL)
+		{
+			printf("Enter command in kill <sig> <pid>/[-<pgid>]\n");
+			return 1;
+		}
+
+		if (conv->data[0][2][0] == '-')
+		{
+			kill((atoi(conv->data[0][2])), atoi(conv->data[0][1]));
+			if (errno == EINVAL)
+			{
+				printf("An invalid signal was specified.\n");
+			}
+			if (errno == EPERM)
+			{
+				printf("The calling process does not have permission to send the signal to any of the target processes.\n");
+			}
+			if (errno == ESRCH)
+			{
+				printf("The target process or process group does not exist.  Note that an existing process might be a zombie, a process that has terminated execution, but  has not yet been wait(2)ed for.\n");
+			}
+			errno = 0;
+		}
+
+		kill((atoi(conv->data[0][2])), atoi(conv->data[0][1]));
+		if (errno == EINVAL)
+		{
+			printf("An invalid signal was specified.\n");
+		}
+		if (errno == EPERM)
+		{
+			printf("The calling process does not have permission to send the signal to any of the target processes.\n");
+		}
+		if (errno == ESRCH)
+		{
+			printf("The target process or process group does not exist.  Note that an existing process might be a zombie, a process that has terminated execution, but  has not yet been wait(2)ed for.\n");
+		}
+		errno = 0;
+		return 1;
+	}
+	if (strcmp(conv->data[0][0], "mfg") == 0)
+	{
+		if (conv->data[0][1] == NULL)
+		{
+			printf("Use mfg <gpid>\n");
+			return 1;
+		}
+		pid_t target_pid = atoi(conv->data[0][1]);
+		return_foreground(target_pid, group_head);
+		return 1;
+	}
+	return 0;
+}
+
+void return_foreground(pid_t target_pid, struct group *group_head)
+{
+}
+
+void jobs_control(struct group *group_head)
+{
+	if (group_head == NULL)
+	{
+		return;
+	}
+	struct group *ptr = group_head;
+	struct group_pr *ptr_gr = group_head->gr_pr;
+	while (ptr != NULL)
+	{
+		if (ptr->status == 5)
+		{
+			ptr = ptr->next;
+			continue;
+		}
+		pid_t wait_pid = 0;
+		int status = 0;
+		for (int i = 0; i < ptr->size; i++)
+		{
+			wait_pid = waitpid(-(ptr->group_leader), &status, WUNTRACED | WNOHANG | WCONTINUED);
+
+			if (wait_pid == 0)
+			{
+			}
+			if (wait_pid == -1)
+			{
+				ptr->status = 5;
+			}
+			if (wait_pid > 1)
+			{
+
+				while (ptr_gr->pid != wait_pid)
+				{
+					ptr_gr = ptr_gr->next;
+				}
+				if (WIFEXITED(status))
+				{
+					ptr_gr->status = 3;
+				}
+				else if (!WIFEXITED(status))
+				{
+					if (WIFSTOPPED(status))
+					{
+						ptr_gr->status = 2;
+					}
+					if (WIFCONTINUED(status))
+					{
+						ptr_gr->status = 1;
+					}
+				}
+			}
+		}
+		ptr = ptr->next;
+		if (ptr != NULL)
+			ptr_gr = ptr->gr_pr;
+		else
+			break;
 	}
 }
 
-void collect_jobs(struct group *group_head)
+void analyze_jobs(struct group *group_head)
+{
+	if (group_head == NULL)
+	{
+		return;
+	}
+	struct group *ptr = group_head;
+	struct group_pr *ptr_gr = group_head->gr_pr;
+	int stop_c = 0;
+	int exit_c = 0;
+	while (ptr != NULL)
+	{
+		stop_c = 0;
+		exit_c = 0;
+		while (ptr_gr != NULL)
+		{
+			if (ptr_gr->status == 0 || ptr_gr->status == 1)
+			{
+				ptr->status = 1;
+				break;
+			}
+			if (ptr_gr->status == 2)
+			{
+				stop_c++;
+			}
+			if (ptr_gr->status == 3)
+			{
+				exit_c++;
+			}
+		}
+		if (stop_c == ptr->size)
+		{
+			ptr->status = 2;
+		}
+		else if (stop_c == 0 && stop_c + exit_c == ptr->size)
+		{
+			ptr->status = 3;
+		}
+		else if ((stop_c == 0 || exit_c == 0) && stop_c + exit_c != ptr->size)
+		{
+			ptr->status = 1;
+		}
+		ptr = ptr->next;
+		if (ptr != NULL)
+			ptr_gr = ptr->gr_pr;
+		else
+			break;
+	}
+}
+
+void print_jobs(struct group *group_head)
 {
 	while (group_head != NULL)
 	{
-		int status;
-		for (int i = 0; i < group_head->size; i++)
+		if (group_head->status == 1)
 		{
-			waitpid(-(group_head->group_leader), &status, WUNTRACED | WNOHANG | WCONTINUED);
-			if (WIFEXITED(status))
-			{
-				group_head->status = 3;
-			}
-			else
-			{
-				if (WIFSTOPPED(status))
-				{
-					group_head->status = 2;
-					break;
-				}
-				if (WIFCONTINUED(status))
-				{
-					group_head->status = 1;
-					break;
-				}
-			}
+			printf("[%d] Working\n", group_head->group_leader);
+		}
+		if (group_head->status == 2)
+		{
+			printf("[%d] Stopped\n", group_head->group_leader);
+		}
+		if (group_head->status == 3)
+		{
+			printf("[%d] Finished\n", group_head->group_leader);
+			group_head->status = 4;
+		}
+		if (group_head->status == 5)
+		{
+			printf("[%d] Killed\n", group_head->group_leader);
 		}
 		group_head = group_head->next;
 	}
@@ -635,7 +835,8 @@ int main()
 	signal(SIGTERM, SIG_IGN);
 	signal(SIGQUIT, SIG_IGN);
 
-	setpgid(0, 0);
+	setpgid(getpid(), getpid());
+	// printf("tcstpgrp on 654 : %d\n", tcsetpgrp(STDIN_FILENO, getpgrp()));
 	tcsetpgrp(STDIN_FILENO, getpgrp());
 
 	struct node *head;
@@ -645,8 +846,9 @@ int main()
 	char *ptr;
 	while (1)
 	{
-		collect_jobs(group_head);
-		printf("\e[1;33m > \e[m \n");
+		jobs_control(group_head);
+		analyze_jobs(group_head);
+		printf(">");
 		ptr = read_func();
 		if (ptr == NULL)
 			continue;
