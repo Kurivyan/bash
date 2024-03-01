@@ -733,32 +733,34 @@ void jobs_control(struct group *group_head)
 	}
 	while (group_head != NULL)
 	{
+		printf("736\n");
 		int wait_pid = 0;
 		int status = 0;
-		int in_repeat = 0;
+		int repeated = 0;
 		while (1)
 		{
+			printf("741\n");
 			wait_pid = 0;
 			status = 0;
 			wait_pid = waitpid(-(group_head->group_leader), &status, WUNTRACED | WNOHANG | WCONTINUED);
 			// printf("wait_pid = %d \n", wait_pid);
 			if (wait_pid == 0)
 			{
-				if (in_repeat == 2)
-				{
+				printf("747\n");
+				if (repeated == 1)
 					break;
-				}
-				in_repeat++;
+				repeated = 1;
 				continue;
 			}
-			if (wait_pid == -1 && !(group_head->status == 3 || group_head->status == 4 || group_head->status == 5))
+			if (wait_pid == -1 && !(group_head->status == 4 || group_head->status == 5))
 			{
+				printf("754\n");
 				group_head->status = 3;
 				break;
 			}
 			if (wait_pid > 1)
 			{
-				in_repeat = 0;
+				printf("763\n");
 				struct group_pr *ptr = group_head->gr_pr;
 				while (ptr->pid != wait_pid)
 				{
@@ -900,6 +902,8 @@ int main()
 	char *ptr;
 	while (1)
 	{
+		jobs_control(group_head);
+		analyze_jobs(group_head);
 		printf(">\n");
 		ptr = read_func();
 		if (ptr == NULL)
@@ -907,7 +911,6 @@ int main()
 		insert_command(&head, ptr);
 		execute(head, &group_head);
 		jobs_control(group_head);
-		analyze_jobs(group_head);
 	}
 	return 0;
 }
