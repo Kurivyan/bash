@@ -30,7 +30,7 @@ struct node
 struct group_pr
 {
 	pid_t pid;
-	int status; // 1 - продолжен || 2 - остановлен || 3 - завершен
+	int status; // 1 - продолжен || 2 - остановлен || 3 - завершен || 4 - killed
 	struct group_pr *next;
 };
 
@@ -53,12 +53,12 @@ void insert_group(struct group **, struct group *);
 void insert_group_pr(struct group_pr **, pid_t);
 char *read_func();
 char *destructorize(char *);
-void execute(struct node *, struct group **);
-void execute_conv(struct conv *, struct group **, struct node *);
+void execute(struct node *, struct group **, int *);
+void execute_conv(struct conv *, struct group **, struct node *, int *);
 void file_redirecting(char **);
 void return_signals();
 void jobs_control(struct group *);
-void execute_if_inner(struct conv *, struct group *, int *);
+void execute_if_inner(struct conv *, struct group *, int *, int *);
 void data_destroyer();
 void print_jobs(struct group *);
 void return_foreground(pid_t, struct group *);
@@ -402,7 +402,7 @@ void return_signals()
 	signal(SIGQUIT, SIG_DFL);
 }
 
-void execute_conv(struct conv *conv, struct group **group_head, struct node *node)
+void execute_conv(struct conv *conv, struct group **group_head, struct node *node, int *the_end)
 {
 
 	if (conv->start_flag != NULL) // разграничение конвееров по || && ;
@@ -420,7 +420,7 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 	if (conv->commands_count == 1)
 	{
 		int succes = 0;
-		execute_if_inner(conv, *group_head, &succes);
+		execute_if_inner(conv, *group_head, &succes, the_end);
 		if (succes)
 			return;
 	}
@@ -542,14 +542,14 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 	{
 		return;
 	}
-	int status;
 
 	while (1)
 	{
-
+		int status;
 		if (waitpid(-(pid[0]), &status, WUNTRACED) == -1)
 		{
-			break;
+			tcsetpgrp(STDIN_FILENO, getpgrp());
+			return;
 		}
 		if (!WIFEXITED(status))
 		{
@@ -557,9 +557,16 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 			{
 				conv_group = creat_group();
 				conv_group->size = conv_size;
+				conv_group->status = 2;
 				for (int i = 0; i < conv_size; i++)
 				{
 					insert_group_pr(&(conv_group->gr_pr), pid[i]);
+				}
+				struct group_pr *ptr = conv_group->gr_pr;
+				while (ptr != NULL)
+				{
+					ptr->status = 2;
+					ptr = ptr->next;
 				}
 				conv_group->group_leader = conv_group->gr_pr->pid;
 				insert_group(group_head, conv_group);
@@ -567,7 +574,7 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 				node->block_and_flag = 0;
 				node->block_or_flag = 0;
 				tcsetpgrp(STDIN_FILENO, getpgrp());
-				break;
+				return;
 			}
 		}
 		if (WEXITSTATUS(status) == 0)
@@ -586,7 +593,7 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 	tcsetpgrp(STDIN_FILENO, getpgrp());
 }
 
-void execute_if_inner(struct conv *conv, struct group *group_head, int *succes)
+void execute_if_inner(struct conv *conv, struct group *group_head, int *succes, int *the_end)
 {
 	if (strcmp(conv->data[0][0], "cd") == 0)
 	{
@@ -604,8 +611,7 @@ void execute_if_inner(struct conv *conv, struct group *group_head, int *succes)
 	}
 	if (strcmp(conv->data[0][0], "quit") == 0)
 	{
-		data_destroyer();
-		kill(getpid(), SIGKILL);
+		*the_end = 1;
 		*succes = 1;
 	}
 	if (strcmp(conv->data[0][0], "jobs") == 0)
@@ -665,7 +671,7 @@ void execute_if_inner(struct conv *conv, struct group *group_head, int *succes)
 			return;
 		}
 
-		kill((atoi(conv->data[0][2])), atoi(conv->data[0][1]));
+		int work = kill((atoi(conv->data[0][2])), atoi(conv->data[0][1]));
 		if (errno == EINVAL)
 		{
 			printf("An invalid signal was specified.\n");
@@ -678,14 +684,40 @@ void execute_if_inner(struct conv *conv, struct group *group_head, int *succes)
 		{
 			printf("The target process or process group does not exist.  Note that an existing process might be a zombie, a process that has terminated execution, but  has not yet been wait(2)ed for.\n");
 		}
+		if (work == 0)
+		{
+			int target = atoi(conv->data[0][2]);
+			int target_gr = getpgid(target);
+			while (group_head->group_leader != target_gr)
+			{
+				if (group_head == NULL)
+				{
+					*succes = 1;
+					return;
+				}
+				group_head = group_head->next;
+			}
+			struct group_pr *ptr = group_head->gr_pr;
+			while (ptr->pid != target)
+			{
+				if (ptr == NULL)
+				{
+					*succes = 1;
+					return;
+				}
+				ptr = group_head->gr_pr->next;
+			}
+			ptr->status = 3;
+		}
 		errno = 0;
 		*succes = 1;
 	}
-	if (strcmp(conv->data[0][0], "mfg") == 0)
+	if (strcmp(conv->data[0][0], "fg") == 0)
 	{
 		if (conv->data[0][1] == NULL)
 		{
-			printf("Use mfg <gpid>\n");
+			printf("Use fg <gpid>\n");
+			return;
 		}
 		pid_t target_pid = atoi(conv->data[0][1]);
 		return_foreground(target_pid, group_head);
@@ -695,23 +727,34 @@ void execute_if_inner(struct conv *conv, struct group *group_head, int *succes)
 
 void return_foreground(pid_t target_pid, struct group *group_head)
 {
-	while (group_head->group_leader != target_pid)
+	while (1)
 	{
+		if (group_head->group_leader == target_pid)
+		{
+			break;
+		}
+		if (group_head == NULL)
+		{
+			printf("<mfg> : enter correct pgid\n");
+			return;
+		}
 		group_head = group_head->next;
 	}
-	int f_counter = 0;
-	while (group_head->gr_pr != NULL)
+
+	if (group_head->status == 3 || group_head->status == 4 || group_head->status == 5)
 	{
-		if (group_head->gr_pr->status == 3)
-			f_counter++;
-		group_head->gr_pr = group_head->gr_pr->next;
+		printf("<mfg> : enter correct pgid\n");
+		return;
 	}
 
 	tcsetpgrp(STDIN_FILENO, group_head->group_leader);
-	for (int i = 0; i < (group_head->size - f_counter); i++)
+	kill(-(target_pid), SIGCONT);
+
+	group_head->status = 4;
+	while (1)
 	{
 		int status;
-		waitpid(-(group_head->group_leader), &status, WUNTRACED);
+		int wait_pid = waitpid(-(group_head->group_leader), &status, WUNTRACED);
 		if (!WIFEXITED(status))
 		{
 			if (WIFSTOPPED(status))
@@ -719,8 +762,13 @@ void return_foreground(pid_t target_pid, struct group *group_head)
 				tcsetpgrp(STDIN_FILENO, getpgrp());
 				group_head->status = 2;
 				// printf("tcstpgrp on 551 : %d\n", tcsetpgrp(STDIN_FILENO, getpgrp()));
-				break;
+				return;
 			}
+		}
+		if (wait_pid == -1)
+		{
+			tcsetpgrp(STDIN_FILENO, getpgrp());
+			return;
 		}
 	}
 }
@@ -733,44 +781,42 @@ void jobs_control(struct group *group_head)
 	}
 	while (group_head != NULL)
 	{
-		printf("736\n");
-		int wait_pid = 0;
-		int status = 0;
 		int repeated = 0;
 		while (1)
 		{
-			printf("741\n");
-			wait_pid = 0;
-			status = 0;
+			pid_t wait_pid = 0;
+			int status = 0;
 			wait_pid = waitpid(-(group_head->group_leader), &status, WUNTRACED | WNOHANG | WCONTINUED);
-			// printf("wait_pid = %d \n", wait_pid);
 			if (wait_pid == 0)
 			{
-				printf("747\n");
-				if (repeated == 1)
-					break;
-				repeated = 1;
-				continue;
+				break;
 			}
-			if (wait_pid == -1 && !(group_head->status == 4 || group_head->status == 5))
+			if (wait_pid == -1)
 			{
-				printf("754\n");
-				group_head->status = 3;
 				break;
 			}
 			if (wait_pid > 1)
 			{
-				printf("763\n");
 				struct group_pr *ptr = group_head->gr_pr;
-				while (ptr->pid != wait_pid)
+				while (ptr != NULL)
 				{
+
+					if (ptr->pid == wait_pid)
+						break;
 					ptr = ptr->next;
 				}
-				if (WIFEXITED(status))
+				if (WIFSIGNALED(status))
 				{
-					ptr->status = 3;
+					if (WTERMSIG(status) == SIGKILL)
+					{
+						ptr->status = 4;
+					}
+					else
+					{
+						ptr->status = 3;
+					}
 				}
-				else if (!WIFEXITED(status))
+				else
 				{
 					if (WIFSTOPPED(status))
 					{
@@ -795,18 +841,17 @@ void analyze_jobs(struct group *group_head)
 	}
 	while (group_head != NULL)
 	{
+		if (group_head->status == 3 || group_head->status == 4 || group_head->status == 5)
+		{
+			group_head = group_head->next;
+			continue;
+		}
 		int stop_c = 0;
 		int exit_c = 0;
+		int killed_c = 0;
 		struct group_pr *ptr = group_head->gr_pr;
 		while (ptr != NULL)
 		{
-			if (ptr->status = 0)
-			{
-			}
-			if (ptr->status == 1)
-			{
-				break;
-			}
 			if (ptr->status == 2)
 			{
 				stop_c++;
@@ -815,18 +860,26 @@ void analyze_jobs(struct group *group_head)
 			{
 				exit_c++;
 			}
+			if (ptr->status == 4)
+			{
+				killed_c++;
+			}
 			ptr = ptr->next;
 		}
 
-		if (stop_c == group_head->size)
+		if (stop_c == group_head->size - killed_c)
 		{
 			group_head->status = 2;
 		}
-		else if (exit_c == group_head->size)
+		else if (exit_c == group_head->size - killed_c)
 		{
 			group_head->status = 3;
 		}
-		else if (stop_c + exit_c < group_head->size && !(group_head->status == 4 || group_head->status == 3 || group_head->status == 5))
+		else if (killed_c == group_head->size)
+		{
+			group_head->status = 5;
+		}
+		else if (stop_c + exit_c < group_head->size - killed_c)
 		{
 			group_head->status = 1;
 		}
@@ -860,7 +913,7 @@ void print_jobs(struct group *group_head)
 	}
 }
 
-void execute(struct node *head, struct group **group)
+void execute(struct node *head, struct group **group, int *the_end)
 {
 	while (head->next != NULL)
 	{
@@ -876,11 +929,34 @@ void execute(struct node *head, struct group **group)
 			cur_conv = cur_conv->next;
 			j--;
 		}
-		execute_conv(cur_conv, group, head);
+		execute_conv(cur_conv, group, head, the_end);
 	}
 }
 
-void data_destroyer() {}
+void data_destroyer(struct node **head, struct group **group)
+{
+	destroy_node(*head);
+	destroy_group(*group);
+}
+
+void destroy_node(struct node *)
+{
+	while (head != NULL)
+	{
+		tmp = head->next;
+
+		destroy_convs(head->head);
+		free(head);
+
+		head = tmp;
+	}
+}
+
+void destroy_convs(struct conv *head)
+{
+	free(head->start_flag);
+	for(int i = 0; i < )
+}
 
 int main()
 {
@@ -900,17 +976,29 @@ int main()
 	struct group *group_head;
 	group_head = NULL;
 	char *ptr;
+	int the_end = 0;
 	while (1)
 	{
 		jobs_control(group_head);
+		// printf("here1\n");
 		analyze_jobs(group_head);
-		printf(">\n");
+		// printf("here2\n");
+		printf("~shell: \n");
 		ptr = read_func();
+		// printf("here3\n");
 		if (ptr == NULL)
 			continue;
 		insert_command(&head, ptr);
-		execute(head, &group_head);
+		// printf("here4\n");
+		execute(head, &group_head, &the_end);
+		// printf("here5\n");
 		jobs_control(group_head);
+		// printf("here6\n");
+		if (the_end)
+		{
+			data_destroyer(&head, &group_head);
+			break;
+		}
 	}
 	return 0;
 }
