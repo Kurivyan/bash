@@ -11,6 +11,9 @@
 
 struct conv
 {
+	int x;
+	int y;
+	int z;
 	int commands_count;
 	char *start_flag;
 	char ***data;
@@ -44,7 +47,7 @@ struct group
 };
 
 // < -- -- -- -- -- -- -->
-struct node *create_node(char *);
+struct node *create_node();
 struct conv *create_conv();
 struct group *creat_group();
 struct group_pr *creat_group_pr(pid_t);
@@ -67,6 +70,9 @@ void return_foreground(pid_t, struct group *);
 void analyze_jobs(struct group *);
 void print_jobs_expanded(struct group *);
 // < -- -- -- -- -- -- -->
+
+struct node *head;
+struct group *group_head;
 
 struct group_pr *creat_group_pr(pid_t pid)
 {
@@ -127,13 +133,16 @@ void insert_group(struct group **head, struct group *insertance)
 struct conv *create_conv()
 {
 	struct conv *ptr = calloc(1, sizeof(struct conv));
-	char ***temp = (char ***)calloc(7, sizeof(char **));
-	for (int i = 0; i < 5; i++)
+	ptr->x = 7;
+	ptr->y = 7;
+	ptr->z = 15;
+	char ***temp = (char ***)calloc(ptr->x, sizeof(char **));
+	for (int i = 0; i < ptr->x; i++)
 	{
-		temp[i] = (char **)calloc(7, sizeof(char *));
-		for (int j = 0; j < 7; j++)
+		temp[i] = (char **)calloc(ptr->y, sizeof(char *));
+		for (int j = 0; j < ptr->y; j++)
 		{
-			temp[i][j] = (char *)calloc(15, sizeof(char));
+			temp[i][j] = (char *)calloc(ptr->z, sizeof(char));
 		}
 	}
 	ptr->commands_count = 1;
@@ -144,7 +153,7 @@ struct conv *create_conv()
 	return ptr;
 }
 
-struct node *create_node(char *command)
+struct node *create_node()
 {
 	struct node *ptr = calloc(1, sizeof(struct node));
 	ptr->conv_count = 1;
@@ -213,6 +222,7 @@ void insert_command(struct node **head, char *command)
 	{
 		if (part == NULL)
 		{
+			free(curent_conv->data[i_conv_command][i_conv_command_word]);
 			curent_conv->data[i_conv_command][i_conv_command_word] = NULL;
 			break;
 		}
@@ -224,6 +234,7 @@ void insert_command(struct node **head, char *command)
 				char *test = destructorize(command);
 				if (test == NULL)
 				{
+					free(curent_conv->data[i_conv_command][i_conv_command_word]);
 					curent_conv->data[i_conv_command][i_conv_command_word] = NULL;
 					free(part);
 					free(test);
@@ -237,6 +248,7 @@ void insert_command(struct node **head, char *command)
 			}
 			node->conv_count += 1;
 			curent_conv->next = create_conv();
+			free(curent_conv->data[i_conv_command][i_conv_command_word]);
 			curent_conv->data[i_conv_command][i_conv_command_word] = NULL;
 			curent_conv = curent_conv->next;
 			i_conv_command = 0;
@@ -251,16 +263,98 @@ void insert_command(struct node **head, char *command)
 		if (strcmp(part, "|") == 0)
 		{
 			curent_conv->commands_count += 1;
+			free(curent_conv->data[i_conv_command][i_conv_command_word]);
 			curent_conv->data[i_conv_command][i_conv_command_word] = NULL;
 			i_conv_command_word = 0;
 			i_conv_command++;
+			if (i_conv_command == curent_conv->x - 1) // для количества команд
+			{
+				int new_size = curent_conv->x + 5;
+				char ***temp = (char ***)calloc(new_size, sizeof(char **));
+				for (int i = 0; i < new_size; i++)
+				{
+					temp[i] = (char **)calloc(curent_conv->y, sizeof(char *));
+					for (int j = 0; j < curent_conv->y; j++)
+					{
+						temp[i][j] = (char *)calloc(curent_conv->z, sizeof(char));
+					}
+				}
+
+				for (int i = 0; i < curent_conv->x; i++)
+				{
+					for (int j = 0; j < curent_conv->y; j++)
+					{
+						if (curent_conv->data[i][j] != NULL)
+							strcpy(temp[i][j], curent_conv->data[i][j]);
+					}
+				}
+
+				for (int i = 0; i < curent_conv->x; i++)
+				{
+					for (int j = 0; j < curent_conv->y; j++)
+					{
+						free(curent_conv->data[i][j]);
+					}
+					free(curent_conv->data[i]);
+					curent_conv->data[i] = NULL;
+				}
+				free(curent_conv->data);
+				curent_conv->data = temp;
+				curent_conv->x = new_size;
+			}
 			free(part);
 			part = destructorize(command);
 			continue;
 		}
+		if ((int)strlen(part) > curent_conv->z) // для количества букв
+		{
+			for (int i = 0; i < curent_conv->x; i++)
+			{
+				for (int j = 0; j < curent_conv->y; j++)
+				{
+					if (curent_conv->data[i][j] != NULL)
+						curent_conv->data[i][j] = realloc(curent_conv->data[i][j], strlen(part));
+				}
+			}
+			curent_conv->z = (int)strlen(part);
+		}
 		strcpy(curent_conv->data[i_conv_command][i_conv_command_word], part);
 		free(part);
 		i_conv_command_word++;
+		if (i_conv_command_word == curent_conv->y - 1) // для количества аргументов
+		{
+			char ***temp;
+			int new_size = curent_conv->y + 5;
+			temp = (char ***)calloc(curent_conv->x, sizeof(char **));
+			for (int i = 0; i < curent_conv->x; i++)
+			{
+				temp[i] = (char **)calloc(new_size, sizeof(char *));
+				for (int j = 0; j < new_size; j++)
+				{
+					temp[i][j] = (char *)calloc(curent_conv->z, sizeof(char));
+				}
+			}
+
+			for (int i = 0; i < curent_conv->x; i++)
+			{
+				for (int j = 0; j < curent_conv->y; j++)
+				{
+					if (curent_conv->data[i][j] != NULL)
+						strcpy(temp[i][j], curent_conv->data[i][j]);
+				}
+			}
+
+			for (int i = 0; i < curent_conv->x; i++)
+			{
+				for (int j = 0; j < curent_conv->y; i++)
+				{
+					free(curent_conv->data[i][j]);
+				}
+				free(curent_conv->data[i]);
+				curent_conv->data[i] = temp[i];
+			}
+			curent_conv->y = new_size;
+		}
 		part = destructorize(command);
 	}
 	if (*head == NULL)
@@ -343,6 +437,16 @@ char *read_func()
 			continue;
 		}
 
+		if (c == EOF)
+		{
+			if (i == 0)
+			{
+				break;
+			}
+			clearerr(stdin);
+			continue;
+		}
+
 		ptr[i] = c;
 		i++;
 		c = getchar();
@@ -361,7 +465,7 @@ void file_redirecting(char **data)
 {
 	char *word;
 	int fd;
-	int pipe[2];
+	// int pipe[2] = {0, 0};
 	int i = 0;
 	while (1)
 	{
@@ -371,8 +475,8 @@ void file_redirecting(char **data)
 		if (strcmp(word, ">") == 0)
 		{
 			fd = open(data[i + 1], O_CREAT | O_WRONLY | O_TRUNC, 0666);
-			dup2(STDOUT_FILENO, pipe[1]);
-			close(pipe[1]);
+			// dup2(STDOUT_FILENO, pipe[1]);
+			// close(pipe[1]); // temp
 			dup2(fd, STDOUT_FILENO);
 			close(fd);
 			data[i] = NULL;
@@ -380,8 +484,8 @@ void file_redirecting(char **data)
 		if (strcmp(word, ">>") == 0)
 		{
 			fd = open(data[i + 1], O_CREAT | O_WRONLY | O_APPEND, 0666);
-			dup2(STDOUT_FILENO, pipe[1]);
-			close(pipe[1]);
+			// dup2(STDOUT_FILENO, pipe[1]);
+			// close(pipe[1]);
 			dup2(fd, STDOUT_FILENO);
 			close(fd);
 			data[i] = NULL;
@@ -389,8 +493,8 @@ void file_redirecting(char **data)
 		if (strcmp(word, "<") == 0)
 		{
 			fd = open(data[i + 1], O_RDONLY);
-			dup2(STDIN_FILENO, pipe[0]);
-			close(pipe[0]);
+			// dup2(STDIN_FILENO, pipe[0]);
+			// close(pipe[0]);
 			dup2(fd, STDIN_FILENO);
 			close(fd);
 			data[i] = NULL;
@@ -407,6 +511,7 @@ void return_signals()
 	signal(SIGTTOU, SIG_DFL);
 	signal(SIGTERM, SIG_DFL);
 	signal(SIGQUIT, SIG_DFL);
+	signal(SIGCHLD, SIG_DFL);
 }
 
 void execute_conv(struct conv *conv, struct group **group_head, struct node *node, int *the_end)
@@ -553,36 +658,36 @@ void execute_conv(struct conv *conv, struct group **group_head, struct node *nod
 	while (1)
 	{
 		int status;
-		if (waitpid(-(pid[0]), &status, WUNTRACED) == -1)
+		pid_t wait_pid = waitpid(-(pid[0]), &status, WUNTRACED);
+		if (wait_pid == -1)
 		{
 			tcsetpgrp(STDIN_FILENO, getpgrp());
 			return;
 		}
-		if (!WIFEXITED(status))
+		if (WIFSTOPPED(status))
 		{
-			if (WIFSTOPPED(status))
+			conv_group = creat_group();
+			conv_group->size = conv_size;
+			for (int i = 0; i < conv_size; i++)
 			{
-				conv_group = creat_group();
-				conv_group->size = conv_size;
-				conv_group->status = 2;
-				for (int i = 0; i < conv_size; i++)
-				{
-					insert_group_pr(&(conv_group->gr_pr), pid[i]);
-				}
-				struct group_pr *ptr = conv_group->gr_pr;
-				while (ptr != NULL)
-				{
-					ptr->status = 2;
-					ptr = ptr->next;
-				}
-				conv_group->group_leader = conv_group->gr_pr->pid;
-				insert_group(group_head, conv_group);
-				// printf("tcstpgrp on 551 : %d\n", tcsetpgrp(STDIN_FILENO, getpgrp()));
-				node->block_and_flag = 0;
-				node->block_or_flag = 0;
-				tcsetpgrp(STDIN_FILENO, getpgrp());
-				return;
+				insert_group_pr(&(conv_group->gr_pr), pid[i]);
 			}
+			conv_group->group_leader = conv_group->gr_pr->pid;
+
+			struct group_pr *ptr = conv_group->gr_pr;
+			while (1)
+			{
+				if (ptr->pid == wait_pid)
+					break;
+				ptr = ptr->next;
+			}
+			ptr->status = 2;
+
+			insert_group(group_head, conv_group);
+			node->block_and_flag = 0;
+			node->block_or_flag = 0;
+			tcsetpgrp(STDIN_FILENO, getpgrp());
+			return;
 		}
 		if (WEXITSTATUS(status) == 0)
 		{
@@ -652,17 +757,20 @@ void execute_if_inner(struct conv *conv, struct group *group_head, int *succes, 
 		}
 
 		int work = kill((atoi(conv->data[0][2])), atoi(conv->data[0][1]));
-		if (errno == EINVAL)
+		if (work == -1)
 		{
-			printf("An invalid signal was specified.\n");
-		}
-		if (errno == EPERM)
-		{
-			printf("The calling process does not have permission to send the signal to any of the target processes.\n");
-		}
-		if (errno == ESRCH)
-		{
-			printf("The target process or process group does not exist.  Note that an existing process might be a zombie, a process that has terminated execution, but  has not yet been wait(2)ed for.\n");
+			if (errno == EINVAL)
+			{
+				printf("An invalid signal was specified.\n");
+			}
+			if (errno == EPERM)
+			{
+				printf("The calling process does not have permission to send the signal to any of the target processes.\n");
+			}
+			if (errno == ESRCH)
+			{
+				printf("The target process or process group does not exist.  Note that an existing process might be a zombie, a process that has terminated execution, but  has not yet been wait(2)ed for.\n");
+			}
 		}
 		errno = 0;
 		*succes = 1;
@@ -688,17 +796,20 @@ void execute_if_inner(struct conv *conv, struct group *group_head, int *succes, 
 		}
 
 		int work = kill(-(atoi(conv->data[0][1])), 18);
-		if (errno == EINVAL)
+		if (work == -1)
 		{
-			printf("An invalid signal was specified.\n");
-		}
-		if (errno == EPERM)
-		{
-			printf("The calling process does not have permission to send the signal to any of the target processes.\n");
-		}
-		if (errno == ESRCH)
-		{
-			printf("The target process or process group does not exist.  Note that an existing process might be a zombie, a process that has terminated execution, but  has not yet been wait(2)ed for.\n");
+			if (errno == EINVAL)
+			{
+				printf("An invalid signal was specified.\n");
+			}
+			if (errno == EPERM)
+			{
+				printf("The calling process does not have permission to send the signal to any of the target processes.\n");
+			}
+			if (errno == ESRCH)
+			{
+				printf("The target process or process group does not exist.  Note that an existing process might be a zombie, a process that has terminated execution, but  has not yet been wait(2)ed for.\n");
+			}
 		}
 		errno = 0;
 		*succes = 1;
@@ -743,7 +854,6 @@ void return_foreground(pid_t target_pid, struct group *group_head)
 			{
 				tcsetpgrp(STDIN_FILENO, getpgrp());
 				group_head->status = 2;
-				// printf("tcstpgrp on 551 : %d\n", tcsetpgrp(STDIN_FILENO, getpgrp()));
 				return;
 			}
 		}
@@ -763,12 +873,10 @@ void jobs_control(struct group *group_head)
 	}
 	while (group_head != NULL)
 	{
-		int repeated = 0;
 		while (1)
 		{
-			pid_t wait_pid = 0;
 			int status = 0;
-			wait_pid = waitpid(-(group_head->group_leader), &status, WUNTRACED | WNOHANG | WCONTINUED);
+			pid_t wait_pid = waitpid(-(group_head->group_leader), &status, WUNTRACED | WNOHANG | WCONTINUED);
 			if (wait_pid == 0)
 			{
 				break;
@@ -790,25 +898,21 @@ void jobs_control(struct group *group_head)
 
 				if (WIFEXITED(status))
 				{
-
 					ptr->status = 3;
 				}
 				if (WIFSIGNALED(status))
 				{
 					if (WTERMSIG(status) == SIGKILL)
 					{
-
 						ptr->status = 4;
 					}
 				}
 				if (WIFSTOPPED(status))
 				{
-
 					ptr->status = 2;
 				}
 				if (WIFCONTINUED(status))
 				{
-
 					ptr->status = 1;
 				}
 			}
@@ -1001,13 +1105,15 @@ void destroy_node(struct node *nd)
 		struct conv *current_conv = nd->head;
 		while (current_conv != NULL)
 		{
-			for (int i = 0; i < current_conv->commands_count; i++)
+			for (int i = 0; i < current_conv->x; i++)
 			{
-				for (int j = 0; j < 2; j++)
+				for (int j = 0; j < current_conv->y; j++)
 				{
 					free(current_conv->data[i][j]);
+					current_conv->data[i][j] = NULL;
 				}
 				free(current_conv->data[i]);
+				current_conv->data[i] = NULL;
 			}
 			free(current_conv->data);
 			free(current_conv->start_flag);
@@ -1048,13 +1154,10 @@ int main()
 	signal(SIGQUIT, SIG_IGN);
 
 	setpgid(getpid(), getpid());
-	// printf("tcstpgrp on 654 : %d\n", tcsetpgrp(STDIN_FILENO, getpgrp()));
 	tcsetpgrp(STDIN_FILENO, getpgrp());
 
-	struct node *head;
-	head = NULL;
-	struct group *group_head;
-	group_head = NULL;
+	struct node *head = NULL;
+	struct group *group_head = NULL;
 	char *ptr;
 	int the_end = 0;
 	while (1)
@@ -1064,17 +1167,25 @@ int main()
 		printf("~shell: ");
 		ptr = read_func();
 		if (ptr == NULL)
+		{
+			if (feof(stdin))
+			{
+				data_destroyer(&head, &group_head);
+				break;
+			}
 			continue;
+		}
 		insert_command(&head, ptr);
 		execute(head, &group_head, &the_end);
-		jobs_control(group_head);
-		analyze_jobs(group_head);
 		if (the_end)
 		{
 			data_destroyer(&head, &group_head);
 			break;
 		}
+		jobs_control(group_head);
+		analyze_jobs(group_head);
 	}
+	puts("exit");
 	return 0;
 }
 // verified
