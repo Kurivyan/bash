@@ -383,6 +383,8 @@ char *read_func()
 	int i = 0;
 	int flag = 0;
 	int quotes = 0;
+	int ampersand = 0;
+	int palka = 0;
 
 	while (c != '\n')
 	{
@@ -392,10 +394,69 @@ char *read_func()
 			ptr = realloc(ptr, size * sizeof(char));
 		}
 
+		if (c == '|' && i > 0 && flag == 0)
+		{
+			ptr[i] = ' ';
+			i++;
+			ptr[i] = c;
+			i++;
+			palka = 1;
+			c = getchar();
+			continue;
+		}
+
+		if (c == '|' && i > 0 && flag == 0 && palka == 1)
+		{
+			ptr[i] = c;
+			i++;
+			c = getchar();
+			continue;
+		}
+
+		if (c == '&' && i > 0 && flag == 0)
+		{
+			ptr[i] = ' ';
+			i++;
+			ptr[i] = c;
+			i++;
+			ampersand = 1;
+			c = getchar();
+			continue;
+		}
+
+		if (c == '&' && i > 0 && flag == 0 && ampersand == 1)
+		{
+			ptr[i] = c;
+			i++;
+			ampersand = 0;
+			c = getchar();
+			continue;
+		}
+
+		if (c == ';' && i > 0 && flag == 0)
+		{
+			ptr[i] = ' ';
+			i++;
+			ptr[i] = c;
+			i++;
+			c = getchar();
+			continue;
+		}
+
 		if (c == ' ' && i == 0)
 		{
 			c = getchar();
 			continue;
+		}
+
+		if (c != ' ' || c != '&' || c != '|')
+		{
+			if (ptr[i - 1] == '&' || ptr[i - 1] == '|')
+			{
+				ptr[i] = ' ';
+				i++;
+				ptr[i] = c;
+			}
 		}
 
 		if (c != ' ' && flag == 1)
@@ -842,21 +903,49 @@ void return_foreground(pid_t target_pid, struct group *group_head)
 	tcsetpgrp(STDIN_FILENO, group_head->group_leader);
 	kill(-(target_pid), SIGCONT);
 
-	group_head->status = 4;
+	group_head->status = 6;
 
 	while (1)
 	{
 		int status;
 		int wait_pid = waitpid(-(group_head->group_leader), &status, WUNTRACED);
-		if (!WIFEXITED(status))
+
+		if (WIFSTOPPED(status))
 		{
-			if (WIFSTOPPED(status))
+			tcsetpgrp(STDIN_FILENO, getpgrp());
+			struct group_pr *ptr = group_head->gr_pr;
+			while (ptr->pid != wait_pid)
 			{
-				tcsetpgrp(STDIN_FILENO, getpgrp());
-				group_head->status = 2;
+				ptr = ptr->next;
+			}
+			ptr->status = 2;
+			analyze_jobs(group_head);
+			if (group_head->status == 2)
+			{
 				return;
 			}
 		}
+
+		if (WIFSIGNALED(status))
+		{
+			struct group_pr *ptr = group_head->gr_pr;
+			while (ptr->pid != wait_pid)
+			{
+				ptr = ptr->next;
+			}
+			ptr->status = 4;
+		}
+		else
+		{
+			struct group_pr *ptr = group_head->gr_pr;
+			while (ptr->pid != wait_pid)
+			{
+				ptr = ptr->next;
+			}
+			ptr->status = 3;
+		}
+		analyze_jobs(group_head);
+
 		if (wait_pid == -1)
 		{
 			tcsetpgrp(STDIN_FILENO, getpgrp());
